@@ -42,12 +42,44 @@ void setMotorState(State state) {
       ledcWrite(CH_B, 0);
       break;
 
-    case FORWARD:
-      digitalWrite(INA1, HIGH); digitalWrite(INA2, LOW);
-      digitalWrite(INB1, HIGH); digitalWrite(INB2, LOW);
-      ledcWrite(CH_A, motorSpeed);
-      ledcWrite(CH_B, motorSpeed);
-      break;
+      case FORWARD: {
+        // Set motor directions for forward movement.
+        digitalWrite(INA1, HIGH); digitalWrite(INA2, LOW);
+        digitalWrite(INB1, HIGH); digitalWrite(INB2, LOW);
+      
+        // Read RPMs
+        float rpm1 = getSpeed1RPM();
+        float rpm2 = getSpeed2RPM();
+      
+        int pwmA = motorSpeed;
+        int pwmB = motorSpeed;
+      
+        // Use basic proportional correction if both motors are clearly moving
+        if (rpm1 > 5.0 && rpm2 > 5.0) {
+          const float kP = 0.5;
+          const float deadband = 2.0;
+          float rpmDiff = rpm1 - rpm2;
+      
+          if (fabs(rpmDiff) > deadband) {
+            if (rpmDiff > 0) {
+              pwmA = constrain(motorSpeed - kP * rpmDiff, 0, 255);
+            } else {
+              pwmB = constrain(motorSpeed - kP * -rpmDiff, 0, 255);
+            }
+          }
+        } 
+        // Otherwise (startup or slow speed), keep both motors running at default
+        else {
+          pwmA = motorSpeed;
+          pwmB = motorSpeed;
+        }
+      
+        ledcWrite(CH_A, pwmA);
+        ledcWrite(CH_B, pwmB);
+        break;
+      }
+      
+      
 
     case REVERSE:
       digitalWrite(INA1, LOW); digitalWrite(INA2, HIGH);
@@ -92,6 +124,7 @@ void setMotorState(State state) {
 
 void setup() {
   Serial.begin(115200);
+  Serial1.begin(9600);
   // SerialBT.begin("ESP32_BT", true);
   setupEncoders();
 
@@ -134,6 +167,8 @@ void loop() {
 
     Serial.print("Updated state to: ");
     Serial.println(input);
+    Serial1.println(getSpeed1RPM());
+    Serial1.println(getSpeed2RPM());
   }
 
   setMotorState(currentState);

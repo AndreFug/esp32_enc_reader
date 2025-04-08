@@ -9,5 +9,8 @@ bool getEncoder1Direction();
 bool getEncoder2Direction();
 long getEncoder1Count();
 long getEncoder2Count();
+float getSpeed1RPM();
+float getSpeed2RPM();
+
 
 #endif

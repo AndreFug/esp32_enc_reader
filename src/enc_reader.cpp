@@ -16,7 +16,7 @@ volatile bool encoder2Direction = true;
 byte encoder2PinALast = LOW;
 
 // For RPM calculation
-static const float CPR = 700.0;
+static const float CPR = 64.0;
 long encoder1CountPrev = 0;
 long encoder2CountPrev = 0;
 float speed1_rpm = 0;
@@ -57,7 +57,7 @@ void setupEncoders() {
   pinMode(ENCODER2_PIN_B, INPUT);
   attachInterrupt(digitalPinToInterrupt(ENCODER2_PIN_A), encoder2ISR, CHANGE);
 }
-
+  
 void updateEncoderStats() {
   static unsigned long lastUpdate = 0;
   unsigned long now = millis();
@@ -81,6 +81,9 @@ void updateEncoderStats() {
   speed1_rpm = (speed1_pulsesPerSec / CPR) * 60.0;
   speed2_rpm = (speed2_pulsesPerSec / CPR) * 60.0;
 }
+float getSpeed1RPM() { return speed1_rpm; }
+float getSpeed2RPM() { return speed2_rpm; }
+
 
 float getAverageRPM() {
   return fabs((speed1_rpm + speed2_rpm) / 2.0);
