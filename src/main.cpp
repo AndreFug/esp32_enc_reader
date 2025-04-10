@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include "enc_reader.h"
-#include "BluetoothSerial.h"
+#include "PID.h"
+#define fwd true
+#define rev false
 
 // === Motor Control Pins ===
 const int INA1 = 12;
@@ -18,6 +20,7 @@ const int CH_B = 4;             // PWM channel for Motor B
 
 int motorSpeed = 255; // Default motor speed (0–255)
 
+
 // === State Definitions ===
 enum State {
   STOP,
@@ -33,6 +36,65 @@ enum State {
 State currentState = STOP;
 // BluetoothSerial SerialBT;
 
+// PIDDDDD
+PID pid1(3000.0, 50000.0, 0.0);
+PID pid2(3000.0, 50000.0, 0.0);
+bool current_dirA = false;
+bool current_dirB = false;
+
+void set_motor_dir_1(bool direction) {
+  if (direction == fwd) {
+    digitalWrite(INA1, HIGH); digitalWrite(INA2, LOW); // Forward
+  } else {
+    digitalWrite(INA1, LOW); digitalWrite(INA2, HIGH);
+  }
+}
+
+void set_motor_dir_2(bool direction) {
+  if (direction == fwd) {
+    digitalWrite(INB1, HIGH); digitalWrite(INB2, LOW); // Forward
+  } else {
+    digitalWrite(INB1, LOW); digitalWrite(INB2, HIGH);
+  }
+}
+
+
+void setMotor1Speed(int speed) {
+  if (speed < 0 && current_dirA==fwd) {
+    set_motor_dir_1(rev); // Reverse
+    current_dirA = rev;
+  } else if (speed > 0 && current_dirA==rev) {
+    set_motor_dir_1(fwd);
+    current_dirA = fwd;
+  }
+  ledcWrite(CH_A, abs(speed));
+}
+
+void setMotor2Speed(int speed) {
+  if (speed < 0 && current_dirB==fwd) {
+    set_motor_dir_2(rev); // Reverse
+    current_dirB = rev;
+  } else if (speed > 0 && current_dirB==rev) {
+    set_motor_dir_2(fwd);
+    current_dirB = fwd;
+  }
+  ledcWrite(CH_B, abs(speed));
+}
+
+void reset_motor_driver() {
+  digitalWrite(INA1, LOW);
+  digitalWrite(INA2, LOW);
+  ledcWrite(CH_A, 0);
+  digitalWrite(INB1, LOW);
+  digitalWrite(INB2, LOW);
+  ledcWrite(CH_B, 0);
+  delay(10);
+  current_dirA = true;
+  current_dirB = true;
+  set_motor_dir_1(true);
+  set_motor_dir_2(true);
+}
+
 void setMotorState(State state) {
   switch (state) {
     case STOP:
@@ -46,40 +108,8 @@ void setMotorState(State state) {
         // Set motor directions for forward movement.
         digitalWrite(INA1, HIGH); digitalWrite(INA2, LOW);
         digitalWrite(INB1, HIGH); digitalWrite(INB2, LOW);
-      
-        // Read RPMs
-        float rpm1 = getSpeed1RPM();
-        float rpm2 = getSpeed2RPM();
-      
-        int pwmA = motorSpeed;
-        int pwmB = motorSpeed;
-      
-        // Use basic proportional correction if both motors are clearly moving
-        if (rpm1 > 5.0 && rpm2 > 5.0) {
-          const float kP = 0.5;
-          const float deadband = 2.0;
-          float rpmDiff = rpm1 - rpm2;
-      
-          if (fabs(rpmDiff) > deadband) {
-            if (rpmDiff > 0) {
-              pwmA = constrain(motorSpeed - kP * rpmDiff, 0, 255);
-            } else {
-              pwmB = constrain(motorSpeed - kP * -rpmDiff, 0, 255);
-            }
-          }
-        } 
-        // Otherwise (startup or slow speed), keep both motors running at default
-        else {
-          pwmA = motorSpeed;
-          pwmB = motorSpeed;
-        }
-      
-        ledcWrite(CH_A, pwmA);
-        ledcWrite(CH_B, pwmB);
-        break;
       }
-      
-      
+
 
     case REVERSE:
       digitalWrite(INA1, LOW); digitalWrite(INA2, HIGH);
@@ -124,7 +154,6 @@ void setMotorState(State state) {
 
 void setup() {
   Serial.begin(115200);
-  Serial1.begin(9600);
   // SerialBT.begin("ESP32_BT", true);
   setupEncoders();
 
@@ -141,12 +170,70 @@ void setup() {
   ledcAttachPin(PWMA, CH_A);
   ledcAttachPin(PWMB, CH_B);
 
-  setMotorState(STOP);
+
+  pid1.set_constraints(-255, 255);
+  pid2.set_constraints(-255, 255);
+  pid1.set_windup(255);
+  pid2.set_windup(255);
+
+  digitalWrite(INA1, HIGH); digitalWrite(INA2, LOW); // Forward
+  digitalWrite(INB1, HIGH); digitalWrite(INB2, LOW); // Forward
+
 }
 
-void loop() {
-  updateEncoderStats();
 
+unsigned long t_last = micros();
+float target_speed_A = 0.00;
+float target_speed_B = 0.00;
+float freq = 100;
+float t_step = 1e6/freq;
+
+void loop() {
+  
+  unsigned long dt = micros() - t_last;
+
+  if (dt > t_step) { 
+    int bytes = Serial.available(); // Check for available serial data. 
+
+    
+    if (bytes >= 6) {
+      // Process serial data. 
+      char buffer[6];
+      Serial.readBytes(buffer, 6);
+
+      int id1 = (int) buffer[0];
+      int dir1 = (int) buffer[1];
+      float spd1 = (int) buffer[2];
+      int id2 = (int) buffer[3];
+      int dir2 = (int) buffer[4];
+      float spd2 = (int) buffer[5];
+
+      if (id1 == 0x0a) {
+        reset_motor_driver();
+      } else {
+        if (dir1 == 1) target_speed_A = spd1*1e-3;
+        else target_speed_A = -spd1*1e-3;
+        
+        if (dir2 == 1) target_speed_B = spd2*1e-3;
+        else target_speed_B = -spd2*1e-3;
+      }
+    }
+
+    // Stop interrupts to avoid race condition. -> Cannot read encoder values
+    noInterrupts();
+    updateEncoderStats();
+    float current_speed_A = -get_speed_1();
+    float current_speed_B = get_speed_2();
+    interrupts(); // Turn interrupts back on -> can read encoder values
+    int output_A = (int) pid1.control(target_speed_A, current_speed_A, dt*1e-6);
+    int output_B = (int) pid2.control(target_speed_B, current_speed_B, dt*1e-6);
+    setMotor1Speed(output_A);
+    setMotor2Speed(output_B);
+
+    t_last += t_step; // Advance time by step.
+  }
+  
+/*
   if (Serial.available()) {
     String input = Serial.readStringUntil('\n');  
     input.trim();
@@ -167,9 +254,8 @@ void loop() {
 
     Serial.print("Updated state to: ");
     Serial.println(input);
-    Serial1.println(getSpeed1RPM());
-    Serial1.println(getSpeed2RPM());
   }
 
   setMotorState(currentState);
+*/
 }

@@ -1,19 +1,21 @@
 #include "enc_reader.h"
 #include <Arduino.h>
+unsigned long lastUpdate = 0;
 
 // === ENCODER 1 ===
 static const byte ENCODER1_PIN_A = 32;
 static const byte ENCODER1_PIN_B = 33;
 volatile long encoder1Count = 0;
 volatile bool encoder1Direction = true;
-byte encoder1PinALast = LOW;
+volatile byte encoder1PinALast = LOW;
+
 
 // === ENCODER 2 ===
 static const byte ENCODER2_PIN_A = 19;
 static const byte ENCODER2_PIN_B = 21;
 volatile long encoder2Count = 0;
 volatile bool encoder2Direction = true;
-byte encoder2PinALast = LOW;
+volatile byte encoder2PinALast = LOW;
 
 // For RPM calculation
 static const float CPR = 64.0;
@@ -21,6 +23,13 @@ long encoder1CountPrev = 0;
 long encoder2CountPrev = 0;
 float speed1_rpm = 0;
 float speed2_rpm = 0;
+float speed_1 = 0;
+float speed_2 = 0;
+
+float gear_ratio = 0.0075;  // 1/50 * 9/24
+float meters_per_output_rev = 0.1 * 3.1415;
+float meters_per_motor_rev = meters_per_output_rev * gear_ratio; // 
+float meters_per_count = meters_per_motor_rev / CPR;
 
 void IRAM_ATTR encoder1ISR() {
   int Lstate = digitalRead(ENCODER1_PIN_A);
@@ -59,31 +68,25 @@ void setupEncoders() {
 }
   
 void updateEncoderStats() {
-  static unsigned long lastUpdate = 0;
-  unsigned long now = millis();
-  float dt = (now - lastUpdate) / 1000.0;
-  if (dt < 0.01) return; // avoid divide by zero
+  unsigned long now = micros();
+  float dt = (now - lastUpdate) / 1000000.0;
+  if (dt < 0.00001) return; // avoid divide by zero
 
   lastUpdate = now;
 
-  long count1 = encoder1Count;
-  long count2 = encoder2Count;
+  speed_1 = encoder1Count / dt;
+  speed_2 = encoder2Count / dt;
 
-  long delta1 = count1 - encoder1CountPrev;
-  long delta2 = count2 - encoder2CountPrev;
-
-  encoder1CountPrev = count1;
-  encoder2CountPrev = count2;
-
-  float speed1_pulsesPerSec = delta1 / dt;
-  float speed2_pulsesPerSec = delta2 / dt;
-
-  speed1_rpm = (speed1_pulsesPerSec / CPR) * 60.0;
-  speed2_rpm = (speed2_pulsesPerSec / CPR) * 60.0;
+  encoder1Count = 0;
+  encoder2Count = 0;
+  // speed1_rpm = -(speed1_pulsesPerSec / CPR) * 60.0;
+  // speed2_rpm = (speed2_pulsesPerSec / CPR) * 60.0;
 }
-float getSpeed1RPM() { return speed1_rpm; }
-float getSpeed2RPM() { return speed2_rpm; }
+// float getSpeed1RPM() { return speed1_rpm; }
+// float getSpeed2RPM() { return speed2_rpm; }
 
+float get_speed_1() {return speed_1 * meters_per_count; }
+float get_speed_2() {return speed_2 * meters_per_count; }
 
 float getAverageRPM() {
   return fabs((speed1_rpm + speed2_rpm) / 2.0);

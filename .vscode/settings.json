@@ -1,3 +1,13 @@
 {
-    "cmake.sourceDirectory": "C:/Users/andre/Documents/PlatformIO/Projects/esp32_enc_reader/lib/ESP32Encoder"
+    "cmake.sourceDirectory": "C:/Users/andre/Documents/PlatformIO/Projects/esp32_enc_reader/lib/ESP32Encoder",
+    "files.associations": {
+        "array": "cpp",
+        "deque": "cpp",
+        "string": "cpp",
+        "unordered_map": "cpp",
+        "unordered_set": "cpp",
+        "vector": "cpp",
+        "string_view": "cpp",
+        "initializer_list": "cpp"
+    }
 }
