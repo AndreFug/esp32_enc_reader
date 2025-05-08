@@ -1,8 +1,23 @@
 #include <Arduino.h>
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+
 #include "enc_reader.h"
 #include "PID.h"
 #define fwd true
 #define rev false
+
+// === MQTT setup for logs ===
+const char* ssid       = "SSID";
+const char* password   = "WiFi PASSWORD";  // Mobile hotspot
+
+const char* mqttServer = "YOUR_MQTT_BROKER_ADDRESS";  
+const int   mqttPort   = 8883;                    
+const char* mqttUser   = "YOUR_MQTT_USERNAME";      
+const char* mqttPass   = "YOUR_MQTT_PASSWORD";  
+const char* logTopic   = "ESP32/logs";
+
 
 // === Motor Control Pins ===
 const int INA1 = 12;
@@ -35,7 +50,10 @@ enum State {
 };
 
 State currentState = STOP;
-// BluetoothSerial SerialBT;
+WiFiClient espClient;
+PubSubClient client(espClient);
+void setup_wifi();
+void reconnect();
 
 // PIDDDDD
 PID pid1(3000.0, 50000.0, 0.0);
@@ -175,9 +193,52 @@ void printMotorBState() {
   Serial.println(ledcRead(CH_B));
 }
 
+void setup_wifi() {
+  delay(10);
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+
+  WiFi.begin(ssid, password);
+
+  // Wait until connected
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi connected.");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+// Reconnect to MQTT if the connection is lost
+void reconnect() {
+  // Loop until we’re reconnected
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+
+    // Attempt to connect
+    if (client.connect("ESP32S3Client", mqttUser, mqttPass)) {
+      Serial.println("connected!");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" Trying again in 5 seconds...");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
+}
+
 void setup() {
   Serial.begin(115200);
-  // SerialBT.begin("ESP32_BT", true);
+  // Set up WiFi
+  setup_wifi();
+
+  // Set MQTT server details
+  client.setServer(mqttServer, mqttPort);
+
   setupEncoders();
   
   pinMode(INA1, OUTPUT);
@@ -215,7 +276,12 @@ float t_step = 1e6/freq;
 void loop() {
   
   unsigned long dt = micros() - t_last;
-
+  // Reconnect to MQTT if disconnected
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+  
   if (dt > t_step) { 
     int bytes = Serial.available(); // Check for available serial data. 
 
@@ -245,6 +311,7 @@ void loop() {
         
         if (dir2 == 1) target_speed_B = spd2*1e-3;
         else target_speed_B = -spd2*1e-3;
+        
       }
     }
 
@@ -260,5 +327,21 @@ void loop() {
 
     // printMotorAState();
     // printMotorBState();
+// Build JSON log
+    StaticJsonDocument<200> doc;
+    doc["t"]    = millis();
+    doc["A_tgt"]= target_speed_A;
+    doc["A_act"]= current_speed_A;
+    doc["A_out"]= output_A; 
+    doc["B_tgt"]= target_speed_B;
+    doc["B_act"]= current_speed_B;
+    doc["B_out"]= output_B;
+    char buf[200];
+    size_t n = serializeJson(doc, buf);
+
+    // Publish only if significant error
+    if (fabs(target_speed_A-current_speed_A) > 0.05 ||
+        fabs(target_speed_B-current_speed_B) > 0.05) {
+      client.publish(logTopic, buf, n);
     t_last += t_step; // Advance time by step.
   }}
